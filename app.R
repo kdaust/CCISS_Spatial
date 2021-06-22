@@ -23,7 +23,7 @@ gcms <- c("CESM1-CAM5","CanESM2","HadGEM2-ES","MIROC5","GISS-E2R","CCSM4","CSIRO
 feas <- fread("./inputs/Feasibility_v11_21.csv")
 feas <- feas[!is.na(Feasible),.(BGC,SS_NoSpace,Spp,Feasible)]
 feas <- feas[Spp != "X",]
-allSpp <- sort(unique(feas$Spp))
+allSpp <- c("Py","Fd","At","Ep","Sx","Pl","Bl","Cw","Hw","Pw","Lw")
 
 cppFunction("
 NumericVector NewSuitNoCurr(NumericMatrix x, NumericVector vals){
@@ -62,15 +62,30 @@ calcFeas <- function(spp,eda){
     return(suitVotes)
 }
 
-origDat <- calcFeas("Sx","C4")
+calcFeasHist <- function(spp,eda){
+  SSPreds <- fread("./inputs/BUL_Historic_SS.csv")
+  suit <- unique(feas[Spp == spp,])
+  SSPreds <- SSPreds[Edatopic == eda,]
+  SSPreds[suit,NewSuit := i.Feasible, on = "SS_NoSpace"]
+  SSPreds <- SSPreds[!is.na(NewSuit),]
+  SSPreds <- SSPreds[,.(SiteNo,Period,NewSuit)]
+  colnames(SSPreds)[2] <- "FuturePeriod"
+  return(SSPreds)
+}
+
+origDat <- calcFeasHist("Sx","C4")
 
 ui <- fluidPage(
   tabsetPanel(
     tabPanel("Single Map",
              fluidRow(
                column(2,
-                      selectInput("Dist","Choose District",choices = dists,multiple = F,selected = "BUL"),
-                      radioButtons("Type","Choose Map Type",choices = c("BGC","Feasibility"),selected = "Feasibility")
+                      selectInput("Dist","Choose District",choices = "BUL",multiple = F,selected = "BUL"),
+                      radioButtons("Type","Choose Map Type",choices = c("BGC","Feasibility"),selected = "Feasibility"),
+                      radioButtons("period","Select Period",choiceNames = 
+                                     c("Reference","Current","2011-2040","2041-2070","2071-2100"),
+                                   choiceValues = c("Normal61","Current91","2025","2055","2085"),
+                                   selected = "Current91")
                       ),
                column(6,
                       leafletjs_hex,
@@ -80,12 +95,10 @@ ui <- fluidPage(
                       h3("Feasibility Options"),
                       selectInput("sppPick","Select Tree Species",choices = allSpp,selected = "Sx"),
                       selectInput("edaPick","Select Site Position",choices = c("C4","B2","D6"),selected = "C4"),
-                      radioButtons("feasPeriod","Select Period",choices = c('2025','2055','2085'), inline = T),
                       hr(),
                       h3("BGC Options"),
                       selectInput("col1_gcm","Select GCM",choices = gcms),
-                      radioButtons("col1_scn","Select Scenario", choices = c("rcp45","rcp85")),
-                      selectInput("col1_per","Select time period", choices = c("2025","2055","2085"),selected = "2025")
+                      radioButtons("col1_scn","Select Scenario", choices = c("rcp45","rcp85"))
                       )
              )
       )
@@ -97,7 +110,7 @@ ui <- fluidPage(
 server <- function(input, output, session) {
     
     globalServer <- reactiveValues()
-    globalFeas <- reactiveValues()
+    globalFeas <- reactiveValues(data = origDat,datPer = origDat[FuturePeriod == "Current91",])
     
     observeEvent(input$Dist,{
       globalServer$Server <- paste0("http://178.128.227.4/data/",input$Dist,"/{z}/{x}/{y}.pbf")
@@ -105,19 +118,31 @@ server <- function(input, output, session) {
     })
     
     observeEvent({c(input$sppPick,input$edaPick)},{
-      globalFeas$data <- calcFeas(input$sppPick,input$edaPick)
+      if(input$period %in% c('2025','2055','2085')){
+        globalFeas$data <- calcFeas(input$sppPick,input$edaPick)
+      }else{
+        globalFeas$data <- calcFeasHist(input$sppPick,input$edaPick)
+      }
+      
     },priority = 100)
     
-    observeEvent(input$feasPeriod,{
+    observeEvent({c(input$period,input$sppPick,input$edaPick)},{
       dat <- globalFeas$data 
-      dat <- dat[FuturePeriod == input$feasPeriod,]
-      globalFeas$data <- dat
+      dat <- dat[FuturePeriod == input$period,]
+      globalFeas$datPer <- dat
     },priority = 80)
   
     getDistDat1 <- reactive({
+      if(input$period %in% c('2025','2055','2085')){
         dat <- dbGetQuery(con,paste0("select siteno,bgc_pred from future_sf where dist_code = '",input$Dist,
                                      "' and scenario = '",input$col1_scn,"' and futureperiod = '",
-                                     input$col1_per,"' and gcm = '",input$col1_gcm,"'"))
+                                     input$period,"' and gcm = '",input$col1_gcm,"'"))
+      }else{
+        dat <- dbGetQuery(con,paste0("select siteno,bgc_pred from historic_sf where dist_code = '",input$Dist,
+                                     "' and period = '",
+                                     input$period,"'"))
+      }
+        
         dat <- as.data.table(dat)
         dat[cw,NewID := i.Index, on = c(siteno = "OldIdx")]
         dat2 <- dat[,.N,by = .(NewID,bgc_pred)][order(-N), .SD[1], by = NewID]
@@ -135,18 +160,18 @@ server <- function(input, output, session) {
             invokeMethod(data = "xxx", method = "addHexTiles1", globalServer$Server,globalServer$Layer)
     })
     
-    observeEvent({c(input$col1_scn,input$col1_per,
-                    input$col1_gcm,input$sppPick,
-                    input$edaPick,input$feasPeriod,
+    observeEvent({c(input$col1_scn,input$col1_gcm,input$sppPick,
+                    input$edaPick,input$period,
                     input$Type)},{
       if(input$Type == "BGC"){
         dat <- getDistDat1()
         session$sendCustomMessage("newCol1",dat[,.(NewID,Col)])
       }else{
-        dat <- globalFeas$data
+        dat <- globalFeas$datPer
         dat[,Col := colour_values(NewSuit)]
         colDat <- dat[,.(SiteNo,Col)]
         setnames(colDat,c("NewID","Col"))
+        session$sendCustomMessage("resetMap",newIDs)
         session$sendCustomMessage("newCol1",colDat[,.(NewID,Col)])
       }
     },priority = 20)

@@ -38,10 +38,13 @@ jscode_hex <- paste0('window.LeafletWidget.methods.addHexTiles1 = function(serve
           vectorTileLayerStyles: {
             [layerId]: function(properties, zoom) {
               return {
-                weight: 0,
+                stroke: true,
+                weight: 1,
                 fillColor: "#919191",
+                color: "#919191",
                 fill: true,
-                fillOpacity: 1
+                fillOpacity: 1,
+                opacity: 1
               }
             }
           },
@@ -65,11 +68,27 @@ jscode_hex <- paste0('window.LeafletWidget.methods.addHexTiles1 = function(serve
 
         hexID.forEach((ID,i) => {
           let styleNew = {
-            weight: 0,
+            weight: 1,
+            color: Cols[i],
             fillColor: Cols[i],
             fillOpacity: 1,
             fill: true
           };
+          subzLayer.setFeatureStyle(ID, styleNew);
+        });
+      });
+      
+      Shiny.addCustomMessageHandler("resetMap",function(hexID){
+        let styleNew = {
+            stroke: true,
+                weight: 1,
+                fillColor: "#919191",
+                color: "#919191",
+                fill: true,
+                fillOpacity: 1,
+                opacity: 1
+          };
+        hexID.forEach((ID,i) => {
           subzLayer.setFeatureStyle(ID, styleNew);
         });
       });
