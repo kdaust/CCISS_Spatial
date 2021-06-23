@@ -2,9 +2,9 @@ library(raster)
 library(sf)
 library(data.table)
 library(RPostgreSQL)
-Rcpp::sourceCpp("0CCISS_Cfn.cpp")
-source("2CCISS_EdaOverlap.R")
-source("3CCISS_Suit.R")
+Rcpp::sourceCpp("~/CCISS_ver2020/0CCISS_Cfn.cpp")
+source("~/CCISS_ver2020/2CCISS_EdaOverlap.R")
+source("~/CCISS_ver2020/3CCISS_Suit.R")
 
 drv <- dbDriver("PostgreSQL")
 con <- dbConnect(drv, user = "postgres", host = "localhost",password = "Kiriliny41", 
@@ -16,9 +16,9 @@ snoSmall <- sno[1:68000]
 dat <- as.data.table(dat)
 dat <- dat[siteno %in% snoSmall,]
 
-dat <- fread("BUL_HexTest.csv")
-setnames(dat,c("SiteNo","GCM","FuturePeriod","BGC.pred","BGC"))
-dat[,Scenario := "rcp45"]
+dat <- fread("./inputs/DPG_HexTest.csv")
+setnames(dat,c("SiteNo","Scenario", "GCM","FuturePeriod","BGC.pred","BGC"))
+#dat[,Scenario := "rcp45"]
 setcolorder(dat,c("GCM","Scenario","FuturePeriod","SiteNo","BGC","BGC.pred"))
 
 dat[,TotNum := .N, by = .(SiteNo,FuturePeriod,BGC)]
@@ -26,13 +26,13 @@ dat2 <- dat[,.(BGC.prop = .N/TotNum), keyby = .(SiteNo,FuturePeriod,BGC,BGC.pred
 dat2 <- unique(dat2)
 
 eda <- fread(file.choose())
-ssUse <- fread("SiteSeries_Use_CCISSpaper.csv")
+ssUse <- fread("./CreateSSDat/SiteSeries_Use_CCISSpaper.csv")
 setnames(ssUse, old = "MergedBGC","BGC")
 library(tictoc)
 tic()
 SSPreds <- edatopicOverlap(dat2,Edatope = ssUse)
 SSPreds[ssUse,Eda := i.Edatopic, on = "SS_NoSpace"]
-fwrite(SSPreds,"BUL_SSPreds.csv")
+fwrite(SSPreds,"./inputs/DPG_SSPreds.csv")
 toc()
 
 suit <- fread(file.choose())

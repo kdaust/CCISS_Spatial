@@ -15,6 +15,7 @@ con <- dbConnect(drv, user = "postgres", password = "jujL6cB3Wm9y", host = "138.
 
 cw <- fread("./inputs/BigGrid_Crosswalk.csv")
 newIDs <- unique(cw$Index)
+allID <- fread("./inputs/DPG_AllID.csv")
 transCol <- data.table(ID = newIDs,Col = "#FFFFFFFF")
 cols <- fread("./inputs/WNA_v12_HexCols.csv")
 dists <- dbGetQuery(con,"select distinct dist_code from dist_codes")[,1]
@@ -35,8 +36,8 @@ NumericVector NewSuitNoCurr(NumericMatrix x, NumericVector vals){
   return(res);
 }")
 
-calcFeas <- function(spp,eda){
-    SSPreds <- fread("./inputs/BUL_SSPreds.csv")
+calcFeas <- function(spp,eda,type){
+    SSPreds <- fread("./inputs/DPG_SSPreds.csv")
     suit <- unique(feas[Spp == spp,])
     SSPreds <- SSPreds[Eda == eda,]
     SSPred <- SSPreds[,.(SiteNo,FuturePeriod,BGC,SS_NoSpace,SS.pred,SSprob)]
@@ -46,8 +47,24 @@ calcFeas <- function(spp,eda){
     suitMerge <- suit[SSPred]
     setnames(suitMerge, old = c("SS_NoSpace", "i.SS_NoSpace"), new = c("SS.pred", "SS_NoSpace"))
     suitMerge <- suitMerge[!is.na(Spp),]
+    if(type == "Loss/Gain"){
+      suitMerge[suit, Curr := i.Feasible, on = "SS_NoSpace"]
+      suitMerge <- suitMerge[,.(SiteNo,FuturePeriod,SS_NoSpace,SS.pred,SSprob,Feasible,Curr)]
+      setkey(suitMerge,SiteNo,FuturePeriod)
+      suitMerge[,Diff := Curr - Feasible]
+      suitMerge[,Class := fifelse(Diff < 0,"Loss",fifelse(Diff == 0,"Same","Gain"))]
+      suitSum <- suitMerge[,.(PropMod = sum(SSprob)), by = .(SiteNo,FuturePeriod,Class)]
+      suitSum <- suitSum[Class != "Same",]
+      suitSum[,`:=`(Min = min(PropMod),Max = max(PropMod)), by = .(SiteNo,FuturePeriod)]
+      suitSum[,Bifurc := fifelse((Min != Max) & (Min > 0.25*Max),-1,NA_integer_)]
+      suitSum <- suitSum[suitSum[,.I[which.max(PropMod)],by = .(SiteNo,FuturePeriod)]$V1]
+      
+    }
+    temp <- data.table(SiteNo = -1, Spp = spp, FuturePeriod = 2025, SS_NoSpace = "Temp", Feasible = c(1,2,3,4,5))
+    suitMerge <- rbind(suitMerge,temp, fill = T)
     suitVotes <- data.table::dcast(suitMerge, SiteNo + Spp + FuturePeriod + SS_NoSpace ~ Feasible, 
                                    value.var = "SSprob", fun.aggregate = sum)
+    suitVotes <- suitVotes[SiteNo != -1,]
     suitVotes[,VoteSum := `1`+`2`+`3`+`4`]
     suitVotes[,X := 1 - VoteSum]
     suitVotes[,VoteSum := NULL]
@@ -58,12 +75,24 @@ calcFeas <- function(spp,eda){
     suitVotes[suit, Curr := i.Feasible]
     suitVotes[is.na(Curr), Curr := 5]
     suitVotes[,NewSuit := NewSuitNoCurr(as.matrix(.SD),c(1,2,3,5)), .SDcols = c("1","2","3","X")]
-    suitVotes <- suitVotes[,.(SiteNo,FuturePeriod,NewSuit)]
+    suitVotes <- suitVotes[,.(SiteNo,SS_NoSpace, FuturePeriod,NewSuit,Curr)]
+    if(type == "RawVotes"){
+      return(suitVotes)
+    }else if(type == "Feasibility"){
+      suitVotes[,NewSuit := round(NewSuit)]
+      suitVotes <- suitVotes[NewSuit < 3.5,]
+    }else if(type == "Change"){
+      suitVotes[,NewSuit := round(NewSuit)]
+      suitVotes <- suitVotes[NewSuit < 3.5,]
+      suitVotes[,Diff := Curr - NewSuit]
+    }
+    
+    
     return(suitVotes)
 }
 
 calcFeasHist <- function(spp,eda){
-  SSPreds <- fread("./inputs/BUL_Historic_SS.csv")
+  SSPreds <- fread("./inputs/DPG_Historic_SS.csv")
   suit <- unique(feas[Spp == spp,])
   SSPreds <- SSPreds[Edatopic == eda,]
   SSPreds[suit,NewSuit := i.Feasible, on = "SS_NoSpace"]
@@ -80,7 +109,7 @@ ui <- fluidPage(
     tabPanel("Single Map",
              fluidRow(
                column(2,
-                      selectInput("Dist","Choose District",choices = "BUL",multiple = F,selected = "BUL"),
+                      selectInput("Dist","Choose District",choices = "DPG",multiple = F,selected = "DPG"),
                       radioButtons("Type","Choose Map Type",choices = c("BGC","Feasibility"),selected = "Feasibility"),
                       radioButtons("period","Select Period",choiceNames = 
                                      c("Reference","Current","2011-2040","2041-2070","2071-2100"),
@@ -93,7 +122,7 @@ ui <- fluidPage(
                       ),
                column(4,
                       h3("Feasibility Options"),
-                      selectInput("sppPick","Select Tree Species",choices = allSpp,selected = "Sx"),
+                      selectInput("sppPick","Select Tree Species",choices = c("Choose one" = "", allSpp)),
                       selectInput("edaPick","Select Site Position",choices = c("C4","B2","D6"),selected = "C4"),
                       hr(),
                       h3("BGC Options"),
@@ -117,7 +146,7 @@ server <- function(input, output, session) {
       globalServer$Layer <- input$Dist
     })
     
-    observeEvent({c(input$sppPick,input$edaPick)},{
+    observeEvent({c(input$sppPick,input$edaPick,input$period,input$Type)},{
       if(input$period %in% c('2025','2055','2085')){
         globalFeas$data <- calcFeas(input$sppPick,input$edaPick)
       }else{
@@ -126,10 +155,18 @@ server <- function(input, output, session) {
       
     },priority = 100)
     
-    observeEvent({c(input$period,input$sppPick,input$edaPick)},{
-      dat <- globalFeas$data 
-      dat <- dat[FuturePeriod == input$period,]
-      globalFeas$datPer <- dat
+    observeEvent({c(input$period,input$sppPick,input$edaPick,input$Type)},{
+      if(input$Type == "Feasibility"){
+        dat <- globalFeas$data 
+        dat <- dat[FuturePeriod == input$period,]
+        dat[,Col := colour_values(NewSuit)]
+        colDat <- dat[,.(SiteNo,Col)]
+        colDat <- colDat[allID, on = c(SiteNo = "ID")]
+        colDat[is.na(Col),Col := "#919191"]
+        colDat[,Type := NULL]
+        setnames(colDat,c("NewID","Col"))
+        session$sendCustomMessage("newCol1",colDat[,.(NewID,Col)])
+      }
     },priority = 80)
   
     getDistDat1 <- reactive({
@@ -166,13 +203,6 @@ server <- function(input, output, session) {
       if(input$Type == "BGC"){
         dat <- getDistDat1()
         session$sendCustomMessage("newCol1",dat[,.(NewID,Col)])
-      }else{
-        dat <- globalFeas$datPer
-        dat[,Col := colour_values(NewSuit)]
-        colDat <- dat[,.(SiteNo,Col)]
-        setnames(colDat,c("NewID","Col"))
-        session$sendCustomMessage("resetMap",newIDs)
-        session$sendCustomMessage("newCol1",colDat[,.(NewID,Col)])
       }
     },priority = 20)
 
@@ -185,6 +215,10 @@ server <- function(input, output, session) {
         temp <- unname(dist_bbox$bb[dist_bbox$ORG_UNIT == input$Dist][[1]])
         leafletProxy("map1") %>%
             fitBounds(lng1 = temp[1], lat1 = temp[2],lng2 = temp[3], lat2 = temp[4])
+    })
+    
+    onStop(function() {
+      dbDisconnect(conn = con)
     })
 }
 

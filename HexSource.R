@@ -39,7 +39,7 @@ jscode_hex <- paste0('window.LeafletWidget.methods.addHexTiles1 = function(serve
             [layerId]: function(properties, zoom) {
               return {
                 stroke: true,
-                weight: 1,
+                weight: 0.5,
                 fillColor: "#919191",
                 color: "#919191",
                 fill: true,
@@ -68,7 +68,7 @@ jscode_hex <- paste0('window.LeafletWidget.methods.addHexTiles1 = function(serve
 
         hexID.forEach((ID,i) => {
           let styleNew = {
-            weight: 1,
+            weight: 0.5,
             color: Cols[i],
             fillColor: Cols[i],
             fillOpacity: 1,
@@ -81,7 +81,7 @@ jscode_hex <- paste0('window.LeafletWidget.methods.addHexTiles1 = function(serve
       Shiny.addCustomMessageHandler("resetMap",function(hexID){
         let styleNew = {
             stroke: true,
-                weight: 1,
+                weight: 0.5,
                 fillColor: "#919191",
                 color: "#919191",
                 fill: true,
