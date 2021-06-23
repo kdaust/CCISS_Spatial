@@ -7,6 +7,7 @@ library(data.table)
 library(colourvalues)
 library(Rcpp)
 library(shinyjs)
+library(shinybusy)
 source("HexSource.R")
 
 drv <- dbDriver("PostgreSQL")
@@ -36,6 +37,36 @@ NumericVector NewSuitNoCurr(NumericMatrix x, NumericVector vals){
   return(res);
 }")
 
+LG_cols <- data.table(PropMod = c(-1,-0.9,-0.7,-0.5,-0.3,0.3,0.5,0.7,0.9),
+                      Col = c("#ff1900","#ff6633","#f78952","#ffcb94","#ffffff","#92eff7","#69cfff","#3b9dff","#002aff"))
+setkey(LG_cols,PropMod)
+feas_cols <- data.table(Suit = c(1,2,3),Col = c("#0c8a32","#43a7e0","#db3700"))
+change_cols <- data.table(Diff = c(-3,-2,-1,0,1,2,3),
+                          Col = c("#ff1900","#ff6633","#f78952","#ffffff","#69cfff","#3b9dff","#002aff"))
+lgLeg <- list(
+  labels = c(LG_cols$PropMod,"Bifurcating"),
+  colours = c(LG_cols$Col,"#c217a8"),
+  title = "% Model loss/gain"
+)
+
+rawLeg <- list(
+  labels = c("Good Feasibility","Poor Feasibility"),
+  colours = c("#440154FF","#FDE725FF"),
+  title = "Model Votes Raw"
+)
+
+feasLeg <- list(
+  labels = feas_cols$Suit,
+  colours = feas_cols$Col,
+  title = "Tree Feasibility"
+)
+
+changeLeg <- list(
+  labels = change_cols$Diff,
+  colours = change_cols$Col,
+  title = "Feasibility Change"
+)
+
 calcFeas <- function(spp,eda,type){
     SSPreds <- fread("./inputs/DPG_SSPreds.csv")
     suit <- unique(feas[Spp == spp,])
@@ -58,7 +89,14 @@ calcFeas <- function(spp,eda,type){
       suitSum[,`:=`(Min = min(PropMod),Max = max(PropMod)), by = .(SiteNo,FuturePeriod)]
       suitSum[,Bifurc := fifelse((Min != Max) & (Min > 0.25*Max),-1,NA_integer_)]
       suitSum <- suitSum[suitSum[,.I[which.max(PropMod)],by = .(SiteNo,FuturePeriod)]$V1]
-      
+      suitSum[,PropMod := fifelse(Class == "Loss",PropMod*-1,PropMod)]
+      suitSum[,`:=`(Min = NULL,Max = NULL)]
+      setkey(suitSum,PropMod)
+      suitSum <- LG_cols[suitSum, roll = T]
+      suitSum[Bifurc == -1,Col := "#c217a8"]
+      suitSum <- suitSum[,.(SiteNo,FuturePeriod,Col)]
+      suitSum <- na.omit(suitSum)
+      return(suitSum)
     }
     temp <- data.table(SiteNo = -1, Spp = spp, FuturePeriod = 2025, SS_NoSpace = "Temp", Feasible = c(1,2,3,4,5))
     suitMerge <- rbind(suitMerge,temp, fill = T)
@@ -77,32 +115,49 @@ calcFeas <- function(spp,eda,type){
     suitVotes[,NewSuit := NewSuitNoCurr(as.matrix(.SD),c(1,2,3,5)), .SDcols = c("1","2","3","X")]
     suitVotes <- suitVotes[,.(SiteNo,SS_NoSpace, FuturePeriod,NewSuit,Curr)]
     if(type == "RawVotes"){
+      suitVotes[,Col := colour_values(NewSuit)]
+      suitVotes <- suitVotes[,.(SiteNo,FuturePeriod,Col)]
       return(suitVotes)
     }else if(type == "Feasibility"){
       suitVotes[,NewSuit := round(NewSuit)]
       suitVotes <- suitVotes[NewSuit < 3.5,]
+      suitVotes[feas_cols,Col := i.Col, on = c(NewSuit = "Suit")]
+      suitVotes <- suitVotes[,.(SiteNo,FuturePeriod,Col)]
+      return(suitVotes)
     }else if(type == "Change"){
       suitVotes[,NewSuit := round(NewSuit)]
-      suitVotes <- suitVotes[NewSuit < 3.5,]
+      suitVotes <- suitVotes[NewSuit < 4.5,]
       suitVotes[,Diff := Curr - NewSuit]
+      suitVotes[change_cols, Col := i.Col, on = "Diff"]
+      suitVotes <- suitVotes[,.(SiteNo,FuturePeriod,Col)]
+      return(suitVotes)
     }
-    
-    
-    return(suitVotes)
 }
 
-calcFeasHist <- function(spp,eda){
+calcFeasHist <- function(spp,eda,type){
   SSPreds <- fread("./inputs/DPG_Historic_SS.csv")
   suit <- unique(feas[Spp == spp,])
   SSPreds <- SSPreds[Edatopic == eda,]
-  SSPreds[suit,NewSuit := i.Feasible, on = "SS_NoSpace"]
+  SSPreds[suit,NewSuit := i.Feasible, on = c(SSPred = "SS_NoSpace")]
+  SSPreds[suit,CurrSuit := i.Feasible, on = c("SS_NoSpace")]
   SSPreds <- SSPreds[!is.na(NewSuit),]
-  SSPreds <- SSPreds[,.(SiteNo,Period,NewSuit)]
+  SSPreds <- SSPreds[,.(SiteNo,Period,NewSuit,CurrSuit)]
   colnames(SSPreds)[2] <- "FuturePeriod"
-  return(SSPreds)
+  if(type == "Change" | type == "Loss/Gain"){
+    SSPreds[,Diff := CurrSuit - NewSuit]
+    SSPreds[change_cols, Col := i.Col, on = "Diff"]
+    SSPreds <- SSPreds[,.(SiteNo,FuturePeriod,Col)]
+    SSPreds <- na.omit(SSPreds)
+    return(SSPreds)
+  }else{
+    SSPreds[feas_cols,Col := i.Col, on = c(NewSuit = "Suit")]
+    SSPreds <- SSPreds[,.(SiteNo,FuturePeriod,Col)]
+    SSPreds <- na.omit(SSPreds)
+    return(SSPreds)
+  }
 }
 
-origDat <- calcFeasHist("Sx","C4")
+origDat <- calcFeasHist("Sx","C4","Feasibility")
 
 ui <- fluidPage(
   tabsetPanel(
@@ -118,12 +173,15 @@ ui <- fluidPage(
                       ),
                column(6,
                       leafletjs_hex,
+                      #add_busy_spinner(),
                       leafletOutput("map1",height = "80vh")
                       ),
                column(4,
                       h3("Feasibility Options"),
                       selectInput("sppPick","Select Tree Species",choices = c("Choose one" = "", allSpp)),
                       selectInput("edaPick","Select Site Position",choices = c("C4","B2","D6"),selected = "C4"),
+                      radioButtons("feasType","Select map type", choices = c("Feasibility","RawVotes","Change","Loss/Gain"),
+                                   selected = "Feasibility"),
                       hr(),
                       h3("BGC Options"),
                       selectInput("col1_gcm","Select GCM",choices = gcms),
@@ -140,32 +198,84 @@ server <- function(input, output, session) {
     
     globalServer <- reactiveValues()
     globalFeas <- reactiveValues(data = origDat,datPer = origDat[FuturePeriod == "Current91",])
+    globalChange <- reactiveVal(TRUE)
+    globalLeg <- reactiveValues(leg = feasLeg)
     
     observeEvent(input$Dist,{
       globalServer$Server <- paste0("http://178.128.227.4/data/",input$Dist,"/{z}/{x}/{y}.pbf")
       globalServer$Layer <- input$Dist
     })
     
-    observeEvent({c(input$sppPick,input$edaPick,input$period,input$Type)},{
-      if(input$period %in% c('2025','2055','2085')){
-        globalFeas$data <- calcFeas(input$sppPick,input$edaPick)
+    observe({
+      if(input$Type == "BGC"){
+        globalLeg$leg <- NULL
       }else{
-        globalFeas$data <- calcFeasHist(input$sppPick,input$edaPick)
+        if(input$feasType == "Feasibility"){
+          globalLeg$leg <- feasLeg
+        }else if(input$feasType == "RawVotes"){
+          globalLeg$leg <- rawLeg
+        }else if(input$feasType == "Change"){
+          globalLeg$leg <- changeLeg
+        }else{
+          globalLeg$leg <- lgLeg
+        }
+      }
+    })
+    
+    observe({
+      input$sppPick
+      input$edaPick
+      input$Type
+      input$feasType
+      globalChange(TRUE)
+    },priority = 200)
+    
+    observe({
+      dat <- globalFeas$data
+      if(input$period %in% dat$FuturePeriod){
+        globalChange(FALSE)
+      }else{
+        globalChange(TRUE)
+      }
+    },priority = 203)
+    
+    observe({
+      if(input$Type == "Feasibility"){
+        leafletProxy("map1") %>%
+          addLegend(position = "bottomright",
+                    labels = globalLeg$leg$labels,
+                    colors = globalLeg$leg$colours,
+                    title = globalLeg$leg$title,
+                    layerId = "bec_hex")
+      }else{
+        leafletProxy("map1") %>%
+          clearControls()
       }
       
+    })
+    
+    observeEvent({c(input$sppPick,input$edaPick,input$period,input$Type,input$feasType)},{
+      show_modal_spinner()
+      if(globalChange()){
+        if(input$period %in% c('2025','2055','2085')){
+          globalFeas$data <- calcFeas(input$sppPick,input$edaPick,input$feasType)
+        }else{
+          globalFeas$data <- calcFeasHist(input$sppPick,input$edaPick,input$feasType)
+        }
+      }
     },priority = 100)
     
-    observeEvent({c(input$period,input$sppPick,input$edaPick,input$Type)},{
+    observeEvent({c(input$period,input$sppPick,input$edaPick,input$Type,input$feasType)},{
       if(input$Type == "Feasibility"){
         dat <- globalFeas$data 
         dat <- dat[FuturePeriod == input$period,]
-        dat[,Col := colour_values(NewSuit)]
-        colDat <- dat[,.(SiteNo,Col)]
-        colDat <- colDat[allID, on = c(SiteNo = "ID")]
-        colDat[is.na(Col),Col := "#919191"]
-        colDat[,Type := NULL]
-        setnames(colDat,c("NewID","Col"))
-        session$sendCustomMessage("newCol1",colDat[,.(NewID,Col)])
+        dat <- dat[allID, on = c(SiteNo = "ID")]
+        dat[is.na(Col),Col := "#919191"]
+        dat[,Type := NULL]
+        dat[,FuturePeriod := NULL]
+        setnames(dat,c("NewID","Col"))
+        session$sendCustomMessage("newCol1",dat[,.(NewID,Col)])
+        remove_modal_spinner()
       }
     },priority = 80)
   
@@ -201,8 +311,10 @@ server <- function(input, output, session) {
                     input$edaPick,input$period,
                     input$Type)},{
       if(input$Type == "BGC"){
+        show_modal_spinner()
         dat <- getDistDat1()
         session$sendCustomMessage("newCol1",dat[,.(NewID,Col)])
+        remove_modal_spinner()
       }
     },priority = 20)
 
