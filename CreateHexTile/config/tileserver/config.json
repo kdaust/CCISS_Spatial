@@ -41,7 +41,6 @@
     "DPG": {"mbtiles" : "DPG.mbtiles"},
     "DPC": {"mbtiles" : "DPC.mbtiles"},
     "DND": {"mbtiles" : "DND.mbtiles"},
-    "CAS": {"mbtiles" : "CAS.mbtiles"},
     "DMK": {"mbtiles" : "DMK.mbtiles"},
     "DQU": {"mbtiles" : "DQU.mbtiles"},
     "DMH": {"mbtiles" : "DMH.mbtiles"},
@@ -57,6 +56,15 @@
     "DNI": {"mbtiles" : "DNI.mbtiles"},
     "DKM": {"mbtiles" : "DKM.mbtiles"},
     "DQC": {"mbtiles" : "DQC.mbtiles"},
-    "DVA": {"mbtiles" : "DVA.mbtiles"}
+    "DVA": {"mbtiles" : "DVA.mbtiles"},
+    "WNA_MAP": {
+      "mbtiles": "wnabgc.mbtiles"
+    },
+    "Districts": {
+      "mbtiles": "districts.mbtiles"
+    },
+    "BC_BGC": {
+      "mbtiles": "bc_bgc12.mbtiles"
+    }
   }
 }

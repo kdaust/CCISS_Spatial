@@ -18,20 +18,24 @@ grd2 <- st_make_grid(dat,cellsize = 1000,square = F)
 grd2 <- st_as_sf(data.frame(ID = 1:length(grd2)),geom = grd2)
 st_write(grd2,"BC_BiggerHex.gpkg")
 
-grd2 <- st_read("BC_BiggerHex.gpkg")
-
+grd2 <- st_read("./CreateHexTile/BC_BiggerHex.gpkg")
+library(RPostgreSQL)
 drv <- dbDriver("PostgreSQL")
-con <- dbConnect(drv, user = "postgres", password = "jujL6cB3Wm9y", host = "138.197.168.220", 
+con <- dbConnect(drv, user = "postgres", password = "PowerOfBEC", host = "138.197.168.220", 
                  port = 5432, dbname = "cciss")
-tileserver <- droplets()[["VerbalColleague"]]
-dists <- dbGetQuery(con,"select distinct dist_code from historic_sf")
+tileserver <- droplets()["tileserver-wna"]
+dists <- dbGetQuery(con,"select dist_code from dist_codes")
 dists <- dists$dist_code
 dists <- dists[dists != "CAS"]
+library(data.table)
+cw <- fread("./inputs/BigGrid_Crosswalk.csv")
+tileserver <- tileserver$`tileserver-wna`
 for(dist in dists){
+  cat(".")
   system("rm -R ./data-raw")
   dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   
-  dat <- dbGetQuery(con,paste0("select siteno from historic_sf where dist_code = '",dist,"' and period = 'Current91'"))
+  dat <- dbGetQuery(con,paste0("select siteno from bgc_dist_ids where dist_code = '",dist,"'"))
   dat <- as.data.table(dat)
   dat[cw,NewID := i.Index, on = c(siteno = "OldIdx")]
   newIDs <- unique(dat$NewID)
@@ -50,5 +54,5 @@ for(dist in dists){
 }
 
 
-launch_tileserver_kd(tileserver, config = "./config/tileserver/config.json")
+launch_tileserver(tileserver, config = "./CreateHexTile/config/tileserver/config.json")
 

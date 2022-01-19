@@ -101,6 +101,40 @@ leafletjs_hex <-  tags$head(
   ))
 )
 
+dbGetCCISSRaw <- function(con, district, gcm, scenario, period){
+  
+  cciss_sql <- paste0("
+    SELECT cciss_future12_array.siteno,
+         labels.gcm,
+         labels.scenario,
+         labels.futureperiod,
+         bgc.bgc bgc_pred
+  FROM cciss_future12_array
+  JOIN (select dist_code, siteno from bgc_dist_ids where dist_code = '",district, "') dists
+    ON (dists.siteno = cciss_future12_array.siteno),
+  unnest(bgc_pred_id) WITH ordinality as source(bgc_pred_id, row_idx)
+  JOIN (SELECT ROW_NUMBER() OVER(ORDER BY gcm_id, scenario_id, futureperiod_id) row_idx,
+               gcm,
+               scenario,
+               futureperiod
+        FROM gcm 
+        CROSS JOIN scenario
+        CROSS JOIN futureperiod) labels
+    ON labels.row_idx = source.row_idx
+  JOIN bgc
+    ON bgc.bgc_id = source.bgc_pred_id
+  WHERE futureperiod = '",period,"'
+  AND scenario = '",scenario,"'
+  AND gcm = '",gcm,"'
+  ")
+  
+  dat <- setDT(RPostgres::dbGetQuery(con, cciss_sql))
+  dat <- unique(dat) ##should fix database so not necessary
+  #print(dat)
+  return(dat)
+}
+
+
 # window.LeafletWidget.methods.addHexTiles2 = function(IDs,Colour,server,layerID) {
 #   var subzoneColors = {};
 #   IDs.forEach((id,i) => {

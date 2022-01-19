@@ -1,6 +1,6 @@
 library(shiny)
 library(leaflet)
-library(RPostgreSQL)
+library(RPostgres)
 library(sf)
 library(shinyWidgets)
 library(data.table)
@@ -8,11 +8,19 @@ library(colourvalues)
 library(Rcpp)
 library(shinyjs)
 library(shinybusy)
+library(pool)
+library(ccissdev)
+
 source("HexSource.R")
 
-drv <- dbDriver("PostgreSQL")
-con <- dbConnect(drv, user = "postgres", password = "jujL6cB3Wm9y", host = "138.197.168.220", 
-                 port = 5432, dbname = "cciss")
+con <- dbPool(
+  drv = RPostgres::Postgres(),
+  dbname = "cciss",
+  host = "138.197.168.220",
+  port = 5432, 
+  user = "postgres",
+  password = "PowerOfBEC"
+)
 
 cw <- fread("./inputs/BigGrid_Crosswalk.csv")
 newIDs <- unique(cw$Index)
@@ -202,7 +210,7 @@ server <- function(input, output, session) {
     globalLeg <- reactiveValues(leg = feasLeg)
     
     observeEvent(input$Dist,{
-      globalServer$Server <- paste0("http://178.128.227.4/data/",input$Dist,"/{z}/{x}/{y}.pbf")
+      globalServer$Server <- paste0("https://tileserver.thebeczone.ca/data/",input$Dist,"/{z}/{x}/{y}.pbf")
       globalServer$Layer <- input$Dist
     })
     
@@ -281,13 +289,7 @@ server <- function(input, output, session) {
   
     getDistDat1 <- reactive({
       if(input$period %in% c('2025','2055','2085')){
-        dat <- dbGetQuery(con,paste0("select siteno,bgc_pred from future_sf where dist_code = '",input$Dist,
-                                     "' and scenario = '",input$col1_scn,"' and futureperiod = '",
-                                     input$period,"' and gcm = '",input$col1_gcm,"'"))
-      }else{
-        dat <- dbGetQuery(con,paste0("select siteno,bgc_pred from historic_sf where dist_code = '",input$Dist,
-                                     "' and period = '",
-                                     input$period,"'"))
+        dat <- dbGetCCISSRaw(con,input$Dist,input$col1_gcm,input$col1_scn,input$period)
       }
         
         dat <- as.data.table(dat)
@@ -330,7 +332,7 @@ server <- function(input, output, session) {
     })
     
     onStop(function() {
-      dbDisconnect(conn = con)
+      poolClose(con)
     })
 }
 
